@@ -14,6 +14,32 @@ beginning.
 
 =head1 METHODS
 
+=head2 import
+
+Marpa at the moment doesn't use inheritance to lookup actions, so instead
+of subclassing this module exports all actions and new method, but only
+if '-base' is passed:
+
+    package MyActions;
+    use MarpaX::Repa::Actions '-base';
+
+=cut
+
+sub import {
+    my $class = shift;
+    my $into = scalar caller;
+    return unless grep $_ eq '-base', @_;
+
+
+    no strict 'refs';
+    foreach my $name (grep /^new$|^do_/, keys %{$class."::"}) {
+        my $src = $class .'::'. $name;
+        my $dst = $into.'::'.$name;
+        next if defined &$dst;
+        *$dst = *$src;
+    }
+}
+
 =head2 new
 
 Just returns a new hash based instance of the class. See 'action_object'
@@ -96,6 +122,19 @@ sub do_scalar_or_list {
     shift;
     @_ = grep defined, @_;
     return @_>1? \@_ : shift;
+}
+
+=head2 do_flat_to_list
+
+Returns (pseudo code):
+
+    [ map @$_||%$_||$_, grep defined, @_ ]
+
+=cut
+
+sub do_flat_to_list {
+    shift;
+    return [ map { ref $_ eq 'ARRAY'? @$_ : ref $_ eq 'HASH'? %$_ : $_ } grep defined, @_ ];
 }
 
 =head2 do_ignore
