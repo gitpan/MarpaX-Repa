@@ -24,7 +24,6 @@ Returns a new lexer instance. Takes named arguments.
             word => qr{\b\w+\b},
         },
         store => 'array',
-        recognizer => $recognizer,
         debug => 1,
     );
 
@@ -35,7 +34,7 @@ Possible arguments:
 =item tokens
 
 Hash with names of terminals as keys and one of the
-following as values:
+following as value:
 
 =over 4
 
@@ -59,18 +58,20 @@ supported.
 
 With hash you can define token specific options. At this moment
 'store' option only (see below). Use C<match> key to set what to
-match (string or regular expression).
+match (string or regular expression):
 
     'a token' => {
         match => "a string",
         store => 'hash',
     },
 
-=back
+Per token options are:
+
+=over 4
 
 =item store
 
-What to store (pass to Marpa's recognizer). The following variants
+What to store (pass as value to Marpa's recognizer). The following variants
 are supported:
 
 =over 4
@@ -98,9 +99,13 @@ Should return a reference or undef that will be passed to recognizer.
 
 =back
 
-=item recognizer
+=item check
 
-L<Marpa::R2::Recognizer> object or its subclass.
+A callback that can check whether token is really match or not.
+
+=back
+
+=back
 
 =item debug
 
@@ -134,7 +139,7 @@ sub init {
         my ($match, @rest);
         if ( ref( $tokens->{ $token } ) eq 'HASH' ) {
             $match = $tokens->{ $token }{'match'};
-            @rest = ($tokens->{ $token }{'store'});
+            @rest = (@{ $tokens->{ $token } }{'store','check'});
         } else {
             $match = $tokens->{ $token };
         }
@@ -154,16 +159,16 @@ sub init {
 
 =head2 recognize
 
-Takes a file handle and parses it. Dies on critical errors, not when parser lost its way.
-Returns recognizer that was passed to L</new>.
+Takes a recognizer and a file handle. Parses input. Dies on critical errors, but
+not when parser lost its way. Returns recognizer that was passed.
 
 =cut
 
 sub recognize {
     my $self = shift;
+    my $rec = shift;
     my $fh = shift;
 
-    my $rec = $self->{'recognizer'};
 
     my $buffer = $self->buffer;
     my $buffer_can_grow = $self->grow_buffer( $fh );
@@ -178,12 +183,14 @@ sub recognize {
         say STDERR "Buffer start: ". $self->dump_buffer .'...'
             if $self->{'debug'};
 
+        my $longest = 0;
+        my @alternatives;
         my $first_char = substr $$buffer, 0, 1;
         foreach my $token ( @$expected ) {
             REDO:
 
             my ($matched, $match, $length);
-            my ($type, $what, $how) = @{ $self->{'tokens'}{ $token } || [] };
+            my ($type, $what, $how, $check) = @{ $self->{'tokens'}{ $token } || [] };
 
             unless ( $type ) {
                 say STDERR "Unknown token: '$token'" if $self->{'debug'};
@@ -221,6 +228,28 @@ sub recognize {
             }
             say STDERR "Token '$token' matched ". $self->dump_buffer( $length )
                 if $self->{'debug'};
+
+            if ( $check && !$check->( $self, $token, $match, $length ) ) {
+                say STDERR "\tCheck failed for '$token', skipping"
+                    if $self->{'debug'};
+                next;
+            }
+
+            if ( $self->{longest_expected} ) {
+                if ( $length > $longest ) {
+                    say STDERR "New longest token of length $length" if $self->{'debug'};
+                    @alternatives = (); $longest = $length;
+                } elsif ( $length < $longest ) {
+                    say STDERR "Skipping $token token as it's short" if $self->{'debug'};
+                    next;
+                }
+            }
+            push @alternatives, [$token, $how, $match, $length];
+        }
+
+        foreach my $e ( @alternatives ) {
+            my ($token, $how, $match, $length) = @$e;
+            say STDERR "Accepting $token of length $length" if $self->{'debug'};
 
             if ( ref $how ) {
                 $match = $how->( $token, \"$match" );
